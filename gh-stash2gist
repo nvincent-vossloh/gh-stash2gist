@@ -1,35 +1,60 @@
 #!/usr/bin/env bash
 set -e
 
-echo "Hello gh-stash2gist!"
+GISTS_DESCS=""
 
-# Snippets to help get started:
+# Build unique stash description from sha1sum of stash content prefixed with "stash-<repo-name>-"
+function build_stash_desc() {
+    local stash_id="$1"
 
-# Determine if an executable is in the PATH
-# if ! type -p ruby >/dev/null; then
-#   echo "Ruby not found on the system" >&2
-#   exit 1
-# fi
+    local stash_sha1=$(git stash show -p "${stash_id}" | sha1sum | awk '{print $1}')
+    local stash_desc="${STASH_PREFIX}-${stash_sha1}"
 
-# Pass arguments through to another command
-# gh issue list "$@" -R cli/cli
+    echo ${stash_desc}
+}
 
-# Using the gh api command to retrieve and format information
-# QUERY='
-#   query($endCursor: String) {
-#     viewer {
-#       repositories(first: 100, after: $endCursor) {
-#         nodes {
-#           nameWithOwner
-#           stargazerCount
-#         }
-#       }
-#     }
-#   }
-# '
-# TEMPLATE='
-#   {{- range $repo := .data.viewer.repositories.nodes -}}
-#     {{- printf "name: %s - stargazers: %v\n" $repo.nameWithOwner $repo.stargazerCount -}}
-#   {{- end -}}
-# '
-# exec gh api graphql -f query="${QUERY}" --paginate --template="${TEMPLATE}"
+# Check if stash has already been pushed to gist
+function is_stash_pushed() {
+    local stash_id="$1"
+    local stash_desc=$(build_stash_desc ${stash_id})
+    echo "Check if ${stash_id} (${stash_desc}) already in gist" > /dev/stderr
+
+    for desc in ${GISTS_DESCS}; do
+        echo " * Check against ${desc}" > /dev/stderr
+        if [ "${desc}" == "${stash_desc}" ]; then
+            echo "   -> YES" > /dev/stderr
+            echo 1
+            return
+        else
+            echo "   -> NO" > /dev/stderr
+        fi
+    done
+    echo 0
+}
+
+function push_stashes() {
+    local stashes=$(git stash list | cut -d':' -f 1)
+    if [ -z "${stashes}" ]; then
+        echo "No stash to push to gist."
+        return 1
+    fi
+    GISTS_DESCS=$(gh api /users/${USERNAME}/gists | jq -M -r '.[] | select(.public==false) | .description' | grep ${STASH_PREFIX})
+    for s in ${stashes}; do
+        ret=$(is_stash_pushed ${s})
+        if [ "${ret}" == "0" ]; then
+            echo "Push stash ${s} to gist"
+            local stash_desc=$(build_stash_desc ${s})
+            git stash show -p ${s} | gh gist create -d "${stash_desc}"
+        fi
+    done
+}
+
+# Check we are in a git respository
+git status > /dev/null
+
+REPO_NAME=$(basename $(git rev-parse --show-toplevel))
+USERNAME=$(gh auth status 2>&1 | grep "Logged in to" | sed 's/.* as \([0-9a-zA-Z-]\+\) .*/\1/')
+STASH_PREFIX="stash-${REPO_NAME}"
+
+push_stashes
+
