@@ -1,32 +1,27 @@
 #!/usr/bin/env bash
 set -e
 
-GISTS_DESCS=""
+GISTS_FILES=""
 
 # Build unique stash description from sha1sum of stash content prefixed with "stash-<repo-name>-"
-function build_stash_desc() {
+function build_stash_filename() {
     local stash_id="$1"
 
     local stash_sha1=$(git stash show -p "${stash_id}" | sha1sum | awk '{print $1}')
-    local stash_desc="${STASH_PREFIX}-${stash_sha1}"
+    local stash_filename="${STASH_PREFIX}-${stash_sha1}.diff"
 
-    echo ${stash_desc}
+    echo ${stash_filename}
 }
 
 # Check if stash has already been pushed to gist
 function is_stash_pushed() {
     local stash_id="$1"
-    local stash_desc=$(build_stash_desc ${stash_id})
-    echo "Check if ${stash_id} (${stash_desc}) already in gist" > /dev/stderr
+    local stash_filename=$(build_stash_filename ${stash_id})
 
-    for desc in ${GISTS_DESCS}; do
-        echo " * Check against ${desc}" > /dev/stderr
-        if [ "${desc}" == "${stash_desc}" ]; then
-            echo "   -> YES" > /dev/stderr
+    for gf in ${GISTS_FILES}; do
+        if [ "${gf}" == "${stash_filename}" ]; then
             echo 1
             return
-        else
-            echo "   -> NO" > /dev/stderr
         fi
     done
     echo 0
@@ -38,13 +33,16 @@ function push_stashes() {
         echo "No stash to push to gist."
         return 1
     fi
-    GISTS_DESCS=$(gh api /users/${USERNAME}/gists | jq -M -r '.[] | select(.public==false) | .description' | grep ${STASH_PREFIX})
+    set +e
+    GISTS_FILES=$(gh api /users/${USERNAME}/gists | jq -M -r '.[] | select(.public==false) | .files | .[].filename' | grep ${STASH_PREFIX})
+    set -e
     for s in ${stashes}; do
         ret=$(is_stash_pushed ${s})
         if [ "${ret}" == "0" ]; then
             echo "Push stash ${s} to gist"
-            local stash_desc=$(build_stash_desc ${s})
-            git stash show -p ${s} | gh gist create -d "${stash_desc}"
+            local stash_filename=$(build_stash_filename ${s})
+            local gist_desc=$(git stash list | grep "${s}" | sed "s/${s}: //")
+            git stash show -p ${s} | gh gist create -f "${stash_filename}" -d "${gist_desc}"
         fi
     done
 }
