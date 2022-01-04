@@ -7,16 +7,21 @@ GISTS_FILES=""
 function build_stash_filename() {
     local stash_id="$1"
 
-    local stash_sha1=$(git stash show -p "${stash_id}" | sha1sum | awk '{print $1}')
-    local stash_filename="${STASH_PREFIX}-${stash_sha1}.diff"
+    local stash_sha1
+    local stash_filename
 
-    echo ${stash_filename}
+    stash_sha1=$(git stash show -p "${stash_id}" | sha1sum | awk '{print $1}')
+    stash_filename="${STASH_PREFIX}-${stash_sha1}.diff"
+
+    echo "${stash_filename}"
 }
 
 # Check if stash has already been pushed to gist
 function is_stash_pushed() {
     local stash_id="$1"
-    local stash_filename=$(build_stash_filename ${stash_id})
+    local stash_filename
+
+    stash_filename=$(build_stash_filename "${stash_id}")
 
     for gf in ${GISTS_FILES}; do
         if [ "${gf}" == "${stash_filename}" ]; then
@@ -28,21 +33,25 @@ function is_stash_pushed() {
 }
 
 function push_stashes() {
-    local stashes=$(git stash list | cut -d':' -f 1)
+    local stashes
+    local stash_filename
+    local gist_desc
+
+    stashes=$(git stash list | cut -d':' -f 1)
     if [ -z "${stashes}" ]; then
         echo "No stash to push to gist."
         return 1
     fi
     set +e
-    GISTS_FILES=$(gh api /users/${USERNAME}/gists | jq -M -r '.[] | select(.public==false) | .files | .[].filename' | grep ${STASH_PREFIX})
+    GISTS_FILES=$(gh api "/users/${USERNAME}/gists" | jq -M -r '.[] | select(.public==false) | .files | .[].filename' | grep "${STASH_PREFIX}")
     set -e
     for s in ${stashes}; do
-        ret=$(is_stash_pushed ${s})
+        ret=$(is_stash_pushed "${s}")
         if [ "${ret}" == "0" ]; then
             echo "Push stash ${s} to gist"
-            local stash_filename=$(build_stash_filename ${s})
-            local gist_desc=$(git stash list | grep "${s}" | sed "s/${s}: //")
-            git stash show -p ${s} | gh gist create -f "${stash_filename}" -d "${gist_desc}"
+            stash_filename=$(build_stash_filename "${s}")
+            gist_desc=$(git stash list | grep "${s}" | sed "s/${s}: //")
+            git stash show -p "${s}" | gh gist create -f "${stash_filename}" -d "${gist_desc}"
         fi
     done
 }
@@ -50,9 +59,8 @@ function push_stashes() {
 # Check we are in a git respository
 git status > /dev/null
 
-REPO_NAME=$(basename $(git rev-parse --show-toplevel))
+REPO_NAME=$(basename "$(git rev-parse --show-toplevel)")
 USERNAME=$(gh auth status 2>&1 | grep "Logged in to" | sed 's/.* as \([0-9a-zA-Z-]\+\) .*/\1/')
 STASH_PREFIX="stash-${REPO_NAME}"
 
 push_stashes
-
