@@ -3,6 +3,17 @@ set -e
 
 GISTS_FILES=""
 
+function help() {
+    cat <<EOF
+Usage: gh stash2gist [--list] [--repo-list]
+
+Pushes local stashes to gist.
+-l|--list: List all stashes that have been pushed to a gist.
+-r|--repo-list: List stashes relevant to local repository which have been pushed to a gist.
+EOF
+
+}
+
 # Build unique stash description from sha1sum of stash content prefixed with "stash-<repo-name>-"
 function build_stash_filename() {
     local stash_id="$1"
@@ -43,7 +54,7 @@ function push_stashes() {
         return 1
     fi
     set +e
-    GISTS_FILES=$(gh api "/users/${USERNAME}/gists" | jq -M -r '.[] | select(.public==false) | .files | .[].filename' | grep "${STASH_PREFIX}")
+    GISTS_FILES=$(echo "${JSON_GISTS}" | jq -M -r '.[] | select(.public==false) | .files | .[].filename' | grep "${STASH_PREFIX}")
     set -e
     for s in ${stashes}; do
         ret=$(is_stash_pushed "${s}")
@@ -56,11 +67,53 @@ function push_stashes() {
     done
 }
 
-# Check we are in a git respository
-git status > /dev/null
+function list_all_stashes_gist() {
+    echo "${JSON_GISTS}" | jq '.[] | select(.public==false) | select(.files[].filename|startswith("stash-")) | "\(.id) \(.description)"'
+}
 
-REPO_NAME=$(basename "$(git rev-parse --show-toplevel)")
-USERNAME=$(gh auth status 2>&1 | grep "Logged in to" | sed 's/.* as \([0-9a-zA-Z-]\+\) .*/\1/')
+function list_repo_stashes_gist() {
+    echo "${JSON_GISTS}" | jq ".[] | select(.public==false) | select(.files[].filename|startswith(\"stash-${REPO_NAME}\")) | \"\(.id) \(.description)\""
+}
+
+USERNAME=$(gh api user --jq '.login')
 STASH_PREFIX="stash-${REPO_NAME}"
 
-push_stashes
+list=0
+repo_list=0
+push=1
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -h|--help)
+            help
+            exit 0
+            ;;
+        -l|--list)
+            list=1
+            push=0
+            ;;
+        -r|--repo-list)
+            repo_list=1
+            push=0
+            ;;
+    esac
+    shift
+done
+
+if [ ${push} -eq 1 ] || [ ${repo_list} -eq 1 ]; then
+    # Check we are in a git respository
+    git status > /dev/null
+    REPO_NAME=$(basename "$(git rev-parse --show-toplevel)")
+fi
+
+JSON_GISTS=$(gh api "/users/${USERNAME}/gists")
+if [ ${push} -eq 1 ]; then
+    push_stashes
+fi
+
+if [ ${list} -eq 1 ]; then
+    list_all_stashes_gist
+fi
+
+if [ ${repo_list} -eq 1 ]; then
+    list_repo_stashes_gist
+fi
