@@ -76,7 +76,6 @@ function list_repo_stashes_gist() {
 }
 
 USERNAME=$(gh api user --jq '.login')
-STASH_PREFIX="stash-${REPO_NAME}"
 
 list=0
 repo_list=0
@@ -103,6 +102,7 @@ if [ ${push} -eq 1 ] || [ ${repo_list} -eq 1 ]; then
     # Check we are in a git respository
     git status > /dev/null
     REPO_NAME=$(basename "$(git rev-parse --show-toplevel)")
+    STASH_PREFIX="stash-${REPO_NAME}"
 fi
 
 JSON_GISTS=$(gh api "/users/${USERNAME}/gists")
