@@ -10,6 +10,7 @@ Usage: gh stash2gist [--list] [--repo-list]
 Pushes local stashes to gist.
 -l|--list: List all stashes that have been pushed to a gist.
 -r|--repo-list: List stashes relevant to local repository which have been pushed to a gist.
+-a|--apply <gist id>: apply stash stored in gist id on the local repository.
 EOF
 
 }
@@ -75,11 +76,39 @@ function list_repo_stashes_gist() {
     echo "${JSON_GISTS}" | jq ".[] | select(.public==false) | select(.files[].filename|startswith(\"stash-${REPO_NAME}\")) | \"\(.id) \(.description)\""
 }
 
+function check_gist_in_repo() {
+    local gist_id
+
+    gist_id="$1"
+    ret=$(echo "${JSON_GISTS}" | jq ".[] | select(.public==false) | select(.files[].filename|startswith(\"stash-${REPO_NAME}\")) | select(.id | startswith(\"${gist_id}\")) | \"\(.id)\"")
+    if [ -z "${ret}" ]; then
+        echo "Gist ${gist_id} not present for ${REPO_NAME}"
+        exit 1
+    fi
+}
+
+function apply_stashed_gist() {
+    local gist_id
+    local tmpfile
+
+    gist_id="$1"
+    check_gist_in_repo "${gist_id}"
+    tmpfile=$(mktemp XXXXXXXX.diff)
+
+
+    gh gist view "${gist_id}" > "${tmpfile}"
+    set +e
+    git apply "${tmpfile}"
+    set -e
+    rm "${tmpfile}"
+}
+
 USERNAME=$(gh api user --jq '.login')
 
 list=0
 repo_list=0
 push=1
+stash_gist_id=""
 while [ $# -gt 0 ]; do
     case "$1" in
         -h|--help)
@@ -94,11 +123,16 @@ while [ $# -gt 0 ]; do
             repo_list=1
             push=0
             ;;
+        -a|--apply)
+            stash_gist_id="${2}"
+            push=0
+            shift
+            ;;
     esac
     shift
 done
 
-if [ ${push} -eq 1 ] || [ ${repo_list} -eq 1 ]; then
+if [ ${push} -eq 1 ] || [ ${repo_list} -eq 1 ] || [ -n "${stash_gist_id}" ]; then
     # Check we are in a git respository
     git status > /dev/null
     REPO_NAME=$(basename "$(git rev-parse --show-toplevel)")
@@ -116,4 +150,8 @@ fi
 
 if [ ${repo_list} -eq 1 ]; then
     list_repo_stashes_gist
+fi
+
+if [ -n "${stash_gist_id}" ]; then
+    apply_stashed_gist "${stash_gist_id}"
 fi
